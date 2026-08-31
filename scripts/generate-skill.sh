@@ -40,7 +40,7 @@ trap 'rm -f -- "$generated"' EXIT HUP INT TERM
   done <"$ROOT/contract/cli-contract.tsv"
   printf '\n## Workflow\n\n'
   printf '%s\n' '1. Run `wt-axi status` before creating or retiring anything. Read `retireSafe`; do not infer safety from a clean-looking folder.'
-  printf '%s\n' '2. For creation, derive a short lowercase kebab-case task slug and run `wt-axi create --task-slug <slug> --branch <branch>`. Work only in the returned `.worktrees/<project>-wt-<task-slug>` path.'
+  printf '%s\n' '2. For creation, derive a short lowercase kebab-case task slug and run `wt-axi create --task-slug <slug> --branch <branch>`. Work only in the returned `<repo>/.worktrees/<project>-wt-<task-slug>` path.'
   printf '%s\n' '3. For retirement, leave the target worktree first. Run `wt-axi retire --path <path>` and preserve the remote branch by default.'
   printf '%s\n' '4. Add `--delete-remote-branch` only when the user explicitly asked to delete that remote branch. Do not treat a general cleanup request as remote deletion consent.'
   printf '%s\n' '5. On any non-zero result, report the structured error and follow its help field. Never retry with force or run upstream hooks directly.'

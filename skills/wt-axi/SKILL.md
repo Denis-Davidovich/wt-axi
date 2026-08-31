@@ -20,7 +20,7 @@ This skill does not grant cleanup authority. Create a worktree only within an im
 ## Workflow
 
 1. Run `wt-axi status` before creating or retiring anything. Read `retireSafe`; do not infer safety from a clean-looking folder.
-2. For creation, derive a short lowercase kebab-case task slug and run `wt-axi create --task-slug <slug> --branch <branch>`. Work only in the returned `.worktrees/<project>-wt-<task-slug>` path.
+2. For creation, derive a short lowercase kebab-case task slug and run `wt-axi create --task-slug <slug> --branch <branch>`. Work only in the returned `<repo>/.worktrees/<project>-wt-<task-slug>` path.
 3. For retirement, leave the target worktree first. Run `wt-axi retire --path <path>` and preserve the remote branch by default.
 4. Add `--delete-remote-branch` only when the user explicitly asked to delete that remote branch. Do not treat a general cleanup request as remote deletion consent.
 5. On any non-zero result, report the structured error and follow its help field. Never retry with force or run upstream hooks directly.
