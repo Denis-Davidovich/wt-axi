@@ -23,9 +23,9 @@ for candidate in \
   "$SMOKE_ROOT/project/.config/opencode/skills/wt-axi/SKILL.md"; do
   if [ -f "$candidate" ]; then
     found=$((found + 1))
-    rg -q 'Safely create, inspect, or retire Git worktrees' "$candidate"
-    rg -q 'wt-axi status' "$candidate"
-    rg -q 'wt-axi retire --path' "$candidate"
+    grep -Fq 'Safely create, inspect, or retire Git worktrees' "$candidate"
+    grep -Fq 'wt-axi status' "$candidate"
+    grep -Fq 'wt-axi retire --path' "$candidate"
   fi
 done
 [ "$found" -gt 0 ] || { printf 'error: installed skill was not discoverable\n' >&2; exit 1; }

@@ -24,14 +24,14 @@ assert_contains() {
   file=$1
   pattern=$2
   label=$3
-  rg -q -- "$pattern" "$file" || fail "$label"
+  grep -Eq -- "$pattern" "$file" || fail "$label"
 }
 
 assert_not_contains() {
   file=$1
   pattern=$2
   label=$3
-  if rg -q -- "$pattern" "$file"; then fail "$label"; fi
+  if grep -Eq -- "$pattern" "$file"; then fail "$label"; fi
 }
 
 run_expect() {
@@ -79,7 +79,7 @@ validate_toon "$help_out"
 assert_contains "$help_out" 'commands\[5\]' "top-level help lists all MVP commands"
 pass "help is concise valid TOON"
 
-if rg -n -i 'planner|docker[[:space:]-]*compose|volume[[:space:]_-]*names?' \
+if grep -ERn -i 'planner|docker[[:space:]-]*compose|volume[[:space:]_-]*names?' \
   "$ROOT/bin" "$ROOT/contract" "$ROOT/scripts" "$ROOT/tests/fixtures/adapter.sh" "$ROOT/skills/wt-axi" >/dev/null; then
   fail "core, fixture, or skill contains consumer-specific terms"
 fi
