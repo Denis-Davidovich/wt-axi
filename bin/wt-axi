@@ -415,7 +415,10 @@ find_worktree() {
       locked*) find_locked=true ;;
       '')
         if [ -n "$find_path" ]; then
-          find_real=$(cd -- "$find_path" 2>/dev/null && pwd -P || true)
+          find_real=
+          if [ -d "$find_path" ]; then
+            find_real=$(cd -- "$find_path" 2>/dev/null && pwd -P)
+          fi
           if [ "$find_real" = "$wanted_path" ]; then
             FOUND_PATH=$find_real
             FOUND_HEAD=$find_head
@@ -437,7 +440,10 @@ find_worktree() {
     esac
   done <"$find_file"
   if [ -n "$find_path" ]; then
-    find_real=$(cd -- "$find_path" 2>/dev/null && pwd -P || true)
+    find_real=
+    if [ -d "$find_path" ]; then
+      find_real=$(cd -- "$find_path" 2>/dev/null && pwd -P)
+    fi
     if [ "$find_real" = "$wanted_path" ]; then
       FOUND_PATH=$find_real
       FOUND_HEAD=$find_head
@@ -487,7 +493,10 @@ cmd_retire() {
   [ -n "$retire_path_arg" ] || usage_error "--path is required" "Run wt-axi retire --help"
   require_repo
   require_command git-gtr
-  retire_path=$(cd -- "$retire_path_arg" 2>/dev/null && pwd -P || true)
+  retire_path=
+  if [ -d "$retire_path_arg" ]; then
+    retire_path=$(cd -- "$retire_path_arg" 2>/dev/null && pwd -P)
+  fi
   [ -n "$retire_path" ] || operation_error unknown_worktree "Worktree path does not exist: $retire_path_arg" "Run wt-axi status"
   find_worktree "$retire_path" || operation_error unknown_worktree "Path is not a registered worktree: $retire_path" "Run wt-axi status"
 

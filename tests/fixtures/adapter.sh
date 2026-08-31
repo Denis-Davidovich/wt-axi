@@ -3,7 +3,7 @@
 set -eu
 
 operation=${1:-}
-[ "$#" -gt 0 ] && shift || true
+if [ "$#" -gt 0 ]; then shift; fi
 
 case "$operation" in
   status)
