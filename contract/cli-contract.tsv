@@ -1,0 +1,5 @@
+create	wt-axi create --task-slug <slug> --branch <branch> [--from <ref>]	Create a platform-named secondary worktree through GTR	--task-slug <slug> (required); --branch <branch> (required); --from <ref> (default origin/main)
+status	wt-axi status [--target <ref>]	Inspect all registered worktrees and emit the retirement decision fields	--target <ref> (default origin/main)
+retire	wt-axi retire --path <path> [--target <ref>] [--delete-remote-branch]	Safely retire one merged secondary worktree after complete preflight	--path <path> (required); --target <ref> (default origin/main); --delete-remote-branch (explicit opt-in)
+doctor	wt-axi doctor	Check Git, pinned GTR, TOON contract, repository layout, and adapter trust	(no flags)
+version	wt-axi version	Print the wt-axi version	(no flags)

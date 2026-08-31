@@ -1,0 +1,3 @@
+0	success, including idempotent no-op
+1	operational or safety error
+2	usage error; dependency calls have not started

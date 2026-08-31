@@ -1,0 +1,615 @@
+#!/usr/bin/env bash
+
+set -u
+CDPATH=''
+
+WT_AXI_SOURCE=${BASH_SOURCE[0]}
+while [ -L "$WT_AXI_SOURCE" ]; do
+  WT_AXI_LINK=$(readlink "$WT_AXI_SOURCE")
+  case "$WT_AXI_LINK" in
+    /*) WT_AXI_SOURCE=$WT_AXI_LINK ;;
+    *) WT_AXI_SOURCE=$(dirname "$WT_AXI_SOURCE")/$WT_AXI_LINK ;;
+  esac
+done
+WT_AXI_BIN_DIR=$(cd -- "$(dirname -- "$WT_AXI_SOURCE")" && pwd -P)
+WT_AXI_ROOT=$(cd -- "$WT_AXI_BIN_DIR/.." && pwd -P)
+WT_AXI_VERSION=$(sed -n '1p' "$WT_AXI_ROOT/VERSION")
+WT_AXI_TARGET_DEFAULT=origin/main
+WT_AXI_TMP_FILES=
+WT_AXI_NEW_TMP=
+
+cleanup() {
+  for cleanup_file in $WT_AXI_TMP_FILES; do
+    [ ! -e "$cleanup_file" ] || rm -f -- "$cleanup_file"
+  done
+}
+trap cleanup EXIT HUP INT TERM
+
+new_tmp() {
+  WT_AXI_NEW_TMP=$(mktemp "${TMPDIR:-/tmp}/wt-axi.XXXXXX") || exit 1
+  WT_AXI_TMP_FILES="$WT_AXI_TMP_FILES $WT_AXI_NEW_TMP"
+}
+
+toon_quote() {
+  toon_value=$1
+  toon_value=${toon_value//\\/\\\\}
+  toon_value=${toon_value//\"/\\\"}
+  toon_value=${toon_value//$'\n'/\\n}
+  toon_value=${toon_value//$'\r'/\\r}
+  toon_value=${toon_value//$'\t'/\\t}
+  printf '"%s"' "$toon_value"
+}
+
+emit_error() {
+  error_code=$1
+  error_message=$2
+  error_help=$3
+  printf 'error:\n'
+  printf '  code: %s\n' "$(toon_quote "$error_code")"
+  printf '  message: %s\n' "$(toon_quote "$error_message")"
+  printf 'help: %s\n' "$(toon_quote "$error_help")"
+}
+
+usage_error() {
+  emit_error usage "$1" "$2"
+  exit 2
+}
+
+operation_error() {
+  emit_error "$1" "$2" "$3"
+  exit 1
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || operation_error missing_dependency "$1 is required" "Run wt-axi doctor"
+}
+
+require_repo() {
+  require_command git
+  repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || operation_error not_a_repository "No Git repository found from the current directory" "Run wt-axi inside a Git repository"
+  repo_root=$(cd -- "$repo_root" && pwd -P)
+}
+
+print_top_help() {
+  command_count=$(awk 'END {print NR}' "$WT_AXI_ROOT/contract/cli-contract.tsv")
+  printf 'bin: %s\n' "$(toon_quote "$WT_AXI_BIN_DIR/wt-axi")"
+  printf 'description: %s\n' "$(toon_quote "Safely create, inspect, and retire Git worktrees for agents")"
+  printf 'commands[%s]{name,usage,summary}:\n' "$command_count"
+  while IFS=$'\t' read -r command_name command_usage command_summary command_flags; do
+    printf '  %s,%s,%s\n' "$(toon_quote "$command_name")" "$(toon_quote "$command_usage")" "$(toon_quote "$command_summary")"
+  done <"$WT_AXI_ROOT/contract/cli-contract.tsv"
+  printf 'help: %s\n' "$(toon_quote "Run wt-axi <command> --help for flags and examples")"
+}
+
+print_command_help() {
+  help_command=$1
+  help_row=$(awk -F '\t' -v command_name="$help_command" '$1 == command_name {print; exit}' "$WT_AXI_ROOT/contract/cli-contract.tsv")
+  [ -n "$help_row" ] || usage_error "Unknown command: $help_command" "Run wt-axi --help"
+  IFS=$'\t' read -r command_name command_usage command_summary command_flags <<<"$help_row"
+  printf 'command:\n'
+  printf '  name: %s\n' "$(toon_quote "$command_name")"
+  printf '  usage: %s\n' "$(toon_quote "$command_usage")"
+  printf '  summary: %s\n' "$(toon_quote "$command_summary")"
+  printf '  flags: %s\n' "$(toon_quote "$command_flags")"
+  case "$command_name" in
+    create)
+      printf 'examples[2]:\n  - %s\n  - %s\n' \
+        "$(toon_quote "wt-axi create --task-slug auth-fix --branch fix/auth")" \
+        "$(toon_quote "wt-axi create --task-slug spike --branch feat/spike --from origin/main")"
+      ;;
+    status)
+      printf 'examples[2]:\n  - %s\n  - %s\n' \
+        "$(toon_quote "wt-axi status")" "$(toon_quote "wt-axi status --target origin/main")"
+      ;;
+    retire)
+      printf 'examples[2]:\n  - %s\n  - %s\n' \
+        "$(toon_quote "wt-axi retire --path .worktrees/myapp-wt-auth-fix")" \
+        "$(toon_quote "wt-axi retire --path .worktrees/myapp-wt-auth-fix --delete-remote-branch")"
+      ;;
+    doctor|version)
+      printf 'examples[1]:\n  - %s\n' "$(toon_quote "wt-axi $command_name")"
+      ;;
+  esac
+}
+
+sha256_file() {
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  elif command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    return 1
+  fi
+}
+
+ADAPTER_RUNTIME=none
+ADAPTER_ACTIVE=false
+ADAPTER_TRUST=none
+ADAPTER_EXEC=
+
+adapter_status() {
+  adapter_worktree=$1
+  ADAPTER_RUNTIME=none
+  ADAPTER_ACTIVE=false
+  ADAPTER_TRUST=none
+  ADAPTER_EXEC=
+
+  adapter_rel=$(git -C "$adapter_worktree" config --local --get wt-axi.adapter.path 2>/dev/null || true)
+  [ -n "$adapter_rel" ] || return 0
+  adapter_expected=$(git -C "$adapter_worktree" config --local --get wt-axi.adapter.sha256 2>/dev/null || true)
+
+  case "$adapter_rel" in
+    /*|../*|*/../*|*/..)
+      ADAPTER_RUNTIME=untrusted
+      ADAPTER_ACTIVE=true
+      ADAPTER_TRUST=invalid-path
+      return 0
+      ;;
+  esac
+
+  adapter_exec="$adapter_worktree/$adapter_rel"
+  if ! git -C "$adapter_worktree" ls-files --error-unmatch -- "$adapter_rel" >/dev/null 2>&1; then
+    ADAPTER_RUNTIME=untrusted
+    ADAPTER_ACTIVE=true
+    ADAPTER_TRUST=untracked
+    return 0
+  fi
+  if [ ! -x "$adapter_exec" ] || [ -z "$adapter_expected" ]; then
+    ADAPTER_RUNTIME=untrusted
+    ADAPTER_ACTIVE=true
+    ADAPTER_TRUST=unpinned
+    return 0
+  fi
+  adapter_actual=$(sha256_file "$adapter_exec" 2>/dev/null || true)
+  if [ -z "$adapter_actual" ] || [ "$adapter_actual" != "$adapter_expected" ]; then
+    ADAPTER_RUNTIME=untrusted
+    ADAPTER_ACTIVE=true
+    ADAPTER_TRUST=hash-mismatch
+    return 0
+  fi
+
+  new_tmp; adapter_out=$WT_AXI_NEW_TMP
+  new_tmp; adapter_err=$WT_AXI_NEW_TMP
+  if ! "$adapter_exec" status --worktree "$adapter_worktree" >"$adapter_out" 2>"$adapter_err"; then
+    sed -n '1,120p' "$adapter_err" >&2
+    ADAPTER_RUNTIME=error
+    ADAPTER_ACTIVE=true
+    ADAPTER_TRUST=trusted
+    return 0
+  fi
+  adapter_runtime=$(awk -F '\t' '$1 == "runtimeState" {print $2; exit}' "$adapter_out")
+  adapter_active=$(awk -F '\t' '$1 == "activeAgent" {print $2; exit}' "$adapter_out")
+  case "$adapter_runtime" in inactive|active|unknown) ;; *) adapter_runtime=error ;; esac
+  case "$adapter_active" in true|false) ;; *) adapter_active=true; adapter_runtime=error ;; esac
+  ADAPTER_RUNTIME=$adapter_runtime
+  ADAPTER_ACTIVE=$adapter_active
+  ADAPTER_TRUST=trusted
+  ADAPTER_EXEC=$adapter_exec
+}
+
+github_repo_slug() {
+  remote_url=$1
+  case "$remote_url" in
+    https://github.com/*)
+      repo_slug=${remote_url#https://github.com/}
+      ;;
+    git@github.com:*)
+      repo_slug=${remote_url#git@github.com:}
+      ;;
+    ssh://git@github.com/*)
+      repo_slug=${remote_url#ssh://git@github.com/}
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+  repo_slug=${repo_slug%.git}
+  printf '%s\n' "$repo_slug"
+}
+
+MERGE_STATE=false
+
+compute_merge_state() {
+  merge_worktree=$1
+  merge_head=$2
+  merge_branch=$3
+  merge_target=$4
+  MERGE_STATE=false
+
+  if git -C "$merge_worktree" merge-base --is-ancestor "$merge_head" "$merge_target" >/dev/null 2>&1; then
+    MERGE_STATE=true
+    return 0
+  fi
+
+  merge_origin=$(git -C "$merge_worktree" remote get-url origin 2>/dev/null || true)
+  merge_slug=$(github_repo_slug "$merge_origin" 2>/dev/null || true)
+  [ -n "$merge_slug" ] || return 0
+  if ! command -v gh >/dev/null 2>&1; then
+    MERGE_STATE=unknown
+    return 0
+  fi
+  merge_base=${merge_target#*/}
+  merge_count=$(gh pr list --repo "$merge_slug" --state merged --head "$merge_branch" --base "$merge_base" --json number --limit 1 --jq 'length' 2>/dev/null) || {
+    MERGE_STATE=unknown
+    return 0
+  }
+  if [ "$merge_count" -gt 0 ] 2>/dev/null; then
+    MERGE_STATE=true
+  fi
+}
+
+path_contains_pwd() {
+  candidate_path=$1
+  current_path=$(pwd -P)
+  case "$current_path/" in
+    "$candidate_path"/|"$candidate_path"/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+inspect_row() {
+  row_path=$1
+  row_head=$2
+  row_branch=$3
+  row_detached=$4
+  row_locked=$5
+  row_primary=$6
+  row_target=$7
+
+  row_dirty=false
+  if [ -n "$(git -C "$row_path" status --porcelain --untracked-files=normal 2>/dev/null)" ]; then
+    row_dirty=true
+  fi
+  adapter_status "$row_path"
+  if [ "$row_detached" = true ]; then
+    MERGE_STATE=false
+  else
+    compute_merge_state "$row_path" "$row_head" "$row_branch" "$row_target"
+  fi
+
+  row_safe=true
+  [ "$row_primary" = false ] || row_safe=false
+  [ "$row_dirty" = false ] || row_safe=false
+  [ "$row_detached" = false ] || row_safe=false
+  [ "$row_locked" = false ] || row_safe=false
+  [ "$MERGE_STATE" = true ] || row_safe=false
+  [ "$ADAPTER_TRUST" = none ] || [ "$ADAPTER_TRUST" = trusted ] || row_safe=false
+  [ "$ADAPTER_RUNTIME" = none ] || [ "$ADAPTER_RUNTIME" = inactive ] || row_safe=false
+  [ "$ADAPTER_ACTIVE" = false ] || row_safe=false
+  if path_contains_pwd "$row_path"; then row_safe=false; fi
+
+  printf '  %s,%s,%s,%s,%s,%s\n' \
+    "$(toon_quote "$row_path")" "$(toon_quote "$row_branch")" "$row_dirty" "$MERGE_STATE" \
+    "$(toon_quote "$ADAPTER_RUNTIME")" "$row_safe"
+}
+
+cmd_status() {
+  status_target=$WT_AXI_TARGET_DEFAULT
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --help|-h) print_command_help status; return 0 ;;
+      --target)
+        [ "$#" -ge 2 ] || usage_error "--target requires a value" "Run wt-axi status --help"
+        status_target=$2
+        shift 2
+        ;;
+      *) usage_error "Unknown flag for status: $1" "Valid flags: --target <ref>, --help" ;;
+    esac
+  done
+  require_repo
+  new_tmp; status_file=$WT_AXI_NEW_TMP
+  git worktree list --porcelain >"$status_file" 2>/dev/null || operation_error git_failed "Unable to list worktrees" "Run wt-axi doctor"
+  status_count=$(awk '$1 == "worktree" {count++} END {print count+0}' "$status_file")
+  printf 'worktrees[%s]{path,branch,dirty,merged,runtimeState,retireSafe}:\n' "$status_count"
+
+  status_path=
+  status_head=
+  status_branch=
+  status_detached=false
+  status_locked=false
+  status_index=0
+  while IFS= read -r status_line || [ -n "$status_line" ]; do
+    case "$status_line" in
+      worktree\ *) status_path=${status_line#worktree } ;;
+      HEAD\ *) status_head=${status_line#HEAD } ;;
+      branch\ refs/heads/*) status_branch=${status_line#branch refs/heads/} ;;
+      detached) status_detached=true; status_branch="(detached)" ;;
+      locked*) status_locked=true ;;
+      '')
+        if [ -n "$status_path" ]; then
+          status_primary=false
+          [ "$status_index" -ne 0 ] || status_primary=true
+          inspect_row "$status_path" "$status_head" "$status_branch" "$status_detached" "$status_locked" "$status_primary" "$status_target"
+          status_index=$((status_index + 1))
+        fi
+        status_path=
+        status_head=
+        status_branch=
+        status_detached=false
+        status_locked=false
+        ;;
+    esac
+  done <"$status_file"
+  if [ -n "$status_path" ]; then
+    status_primary=false
+    [ "$status_index" -ne 0 ] || status_primary=true
+    inspect_row "$status_path" "$status_head" "$status_branch" "$status_detached" "$status_locked" "$status_primary" "$status_target"
+  fi
+}
+
+cmd_create() {
+  create_slug=
+  create_branch=
+  create_from=$WT_AXI_TARGET_DEFAULT
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --help|-h) print_command_help create; return 0 ;;
+      --task-slug)
+        [ "$#" -ge 2 ] || usage_error "--task-slug requires a value" "Run wt-axi create --help"
+        create_slug=$2; shift 2 ;;
+      --branch)
+        [ "$#" -ge 2 ] || usage_error "--branch requires a value" "Run wt-axi create --help"
+        create_branch=$2; shift 2 ;;
+      --from)
+        [ "$#" -ge 2 ] || usage_error "--from requires a value" "Run wt-axi create --help"
+        create_from=$2; shift 2 ;;
+      *) usage_error "Unknown flag for create: $1" "Valid flags: --task-slug, --branch, --from, --help" ;;
+    esac
+  done
+  [ -n "$create_slug" ] || usage_error "--task-slug is required" "Run wt-axi create --help"
+  [ -n "$create_branch" ] || usage_error "--branch is required" "Run wt-axi create --help"
+  case "$create_slug" in
+    *[!a-z0-9-]*|-*|*-|*--*|'') usage_error "--task-slug must be short lowercase kebab-case" "Example: --task-slug auth-fix" ;;
+  esac
+  require_repo
+  require_command git-gtr
+
+  create_project=$(git config --local --get wt-axi.project 2>/dev/null || true)
+  [ -n "$create_project" ] || create_project=$(basename "$repo_root")
+  create_project=${create_project%%.*}
+  case "$create_project" in
+    *[!A-Za-z0-9-]*|'') operation_error invalid_project "Project name is not path-safe: $create_project" "Set git config --local wt-axi.project <name>" ;;
+  esac
+  create_folder="$create_project-wt-$create_slug"
+  new_tmp; create_out=$WT_AXI_NEW_TMP
+  new_tmp; create_err=$WT_AXI_NEW_TMP
+  if ! GTR_WORKTREES_DIR=.worktrees git gtr new "$create_branch" --from "$create_from" --folder "$create_folder" --porcelain >"$create_out" 2>"$create_err"; then
+    sed -n '1,160p' "$create_err" >&2
+    operation_error create_failed "GTR could not create the worktree" "Inspect stderr, then run wt-axi doctor"
+  fi
+  sed -n '1,160p' "$create_err" >&2
+  created_path=$(awk -F '\t' '$1 == "path" {print $2; exit}' "$create_out")
+  created_branch=$(awk -F '\t' '$1 == "branch" {print $2; exit}' "$create_out")
+  created_hook=$(awk -F '\t' '$1 == "hook_status" {print $2; exit}' "$create_out")
+  [ -n "$created_path" ] || operation_error invalid_upstream_output "GTR returned no worktree path" "Run wt-axi doctor"
+  printf 'worktree:\n'
+  printf '  path: %s\n' "$(toon_quote "$created_path")"
+  printf '  branch: %s\n' "$(toon_quote "$created_branch")"
+  printf '  hookStatus: %s\n' "$(toon_quote "$created_hook")"
+  printf '  naming: %s\n' "$(toon_quote "$create_folder")"
+}
+
+FOUND_PATH=
+FOUND_HEAD=
+FOUND_BRANCH=
+FOUND_DETACHED=false
+FOUND_LOCKED=false
+FOUND_PRIMARY=false
+
+find_worktree() {
+  wanted_path=$1
+  new_tmp; find_file=$WT_AXI_NEW_TMP
+  git worktree list --porcelain >"$find_file" 2>/dev/null || return 1
+  find_path=
+  find_head=
+  find_branch=
+  find_detached=false
+  find_locked=false
+  find_index=0
+  while IFS= read -r find_line || [ -n "$find_line" ]; do
+    case "$find_line" in
+      worktree\ *) find_path=${find_line#worktree } ;;
+      HEAD\ *) find_head=${find_line#HEAD } ;;
+      branch\ refs/heads/*) find_branch=${find_line#branch refs/heads/} ;;
+      detached) find_detached=true ;;
+      locked*) find_locked=true ;;
+      '')
+        if [ -n "$find_path" ]; then
+          find_real=$(cd -- "$find_path" 2>/dev/null && pwd -P || true)
+          if [ "$find_real" = "$wanted_path" ]; then
+            FOUND_PATH=$find_real
+            FOUND_HEAD=$find_head
+            FOUND_BRANCH=$find_branch
+            FOUND_DETACHED=$find_detached
+            FOUND_LOCKED=$find_locked
+            FOUND_PRIMARY=false
+            [ "$find_index" -ne 0 ] || FOUND_PRIMARY=true
+            return 0
+          fi
+          find_index=$((find_index + 1))
+        fi
+        find_path=
+        find_head=
+        find_branch=
+        find_detached=false
+        find_locked=false
+        ;;
+    esac
+  done <"$find_file"
+  if [ -n "$find_path" ]; then
+    find_real=$(cd -- "$find_path" 2>/dev/null && pwd -P || true)
+    if [ "$find_real" = "$wanted_path" ]; then
+      FOUND_PATH=$find_real
+      FOUND_HEAD=$find_head
+      FOUND_BRANCH=$find_branch
+      FOUND_DETACHED=$find_detached
+      FOUND_LOCKED=$find_locked
+      FOUND_PRIMARY=false
+      [ "$find_index" -ne 0 ] || FOUND_PRIMARY=true
+      return 0
+    fi
+  fi
+  return 1
+}
+
+refresh_target() {
+  refresh_worktree=$1
+  refresh_target_ref=$2
+  case "$refresh_target_ref" in
+    */*)
+      refresh_remote=${refresh_target_ref%%/*}
+      refresh_branch=${refresh_target_ref#*/}
+      if git -C "$refresh_worktree" remote get-url "$refresh_remote" >/dev/null 2>&1; then
+        printf 'Refreshing target ref %s\n' "$refresh_target_ref" >&2
+        git -C "$refresh_worktree" fetch --quiet "$refresh_remote" "refs/heads/$refresh_branch:refs/remotes/$refresh_remote/$refresh_branch" || return 1
+      fi
+      ;;
+  esac
+}
+
+cmd_retire() {
+  retire_path_arg=
+  retire_target=$WT_AXI_TARGET_DEFAULT
+  retire_remote=false
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --help|-h) print_command_help retire; return 0 ;;
+      --path)
+        [ "$#" -ge 2 ] || usage_error "--path requires a value" "Run wt-axi retire --help"
+        retire_path_arg=$2; shift 2 ;;
+      --target)
+        [ "$#" -ge 2 ] || usage_error "--target requires a value" "Run wt-axi retire --help"
+        retire_target=$2; shift 2 ;;
+      --delete-remote-branch) retire_remote=true; shift ;;
+      *) usage_error "Unknown flag for retire: $1" "Valid flags: --path, --target, --delete-remote-branch, --help" ;;
+    esac
+  done
+  [ -n "$retire_path_arg" ] || usage_error "--path is required" "Run wt-axi retire --help"
+  require_repo
+  require_command git-gtr
+  retire_path=$(cd -- "$retire_path_arg" 2>/dev/null && pwd -P || true)
+  [ -n "$retire_path" ] || operation_error unknown_worktree "Worktree path does not exist: $retire_path_arg" "Run wt-axi status"
+  find_worktree "$retire_path" || operation_error unknown_worktree "Path is not a registered worktree: $retire_path" "Run wt-axi status"
+
+  [ "$FOUND_PRIMARY" = false ] || operation_error unsafe_primary "Primary worktree cannot be retired" "Choose a secondary path from wt-axi status"
+  [ "$FOUND_DETACHED" = false ] || operation_error unsafe_detached "Detached worktree cannot be retired" "Attach it to a branch and re-run wt-axi status"
+  [ "$FOUND_LOCKED" = false ] || operation_error unsafe_locked "Locked worktree cannot be retired" "Review the lock reason before unlocking it"
+  if path_contains_pwd "$FOUND_PATH"; then operation_error unsafe_current "Current worktree cannot be retired" "Change directory to another registered worktree"; fi
+  if [ -n "$(git -C "$FOUND_PATH" status --porcelain --untracked-files=normal 2>/dev/null)" ]; then
+    operation_error unsafe_dirty "Dirty worktree cannot be retired" "Commit, move, or intentionally discard changes outside wt-axi"
+  fi
+
+  adapter_status "$FOUND_PATH"
+  [ "$ADAPTER_TRUST" = none ] || [ "$ADAPTER_TRUST" = trusted ] || operation_error unsafe_adapter "Adapter is not trusted: $ADAPTER_TRUST" "Run wt-axi doctor and update the pinned SHA-256"
+  [ "$ADAPTER_ACTIVE" = false ] || operation_error unsafe_active_agent "Adapter reports an active agent" "Stop the agent and re-run wt-axi status"
+  [ "$ADAPTER_RUNTIME" = none ] || [ "$ADAPTER_RUNTIME" = inactive ] || operation_error unsafe_runtime "Runtime is not safely inactive: $ADAPTER_RUNTIME" "Stop or repair the scoped runtime before retirement"
+
+  refresh_target "$FOUND_PATH" "$retire_target" || operation_error fetch_failed "Could not refresh target ref: $retire_target" "Check remote access and target spelling"
+  compute_merge_state "$FOUND_PATH" "$FOUND_HEAD" "$FOUND_BRANCH" "$retire_target"
+  [ "$MERGE_STATE" = true ] || operation_error unsafe_unmerged "Merge is not proven for $FOUND_BRANCH against $retire_target" "Merge the branch or restore provider authentication"
+
+  adapter_result=none
+  if [ -n "$ADAPTER_EXEC" ]; then
+    new_tmp; adapter_pre_out=$WT_AXI_NEW_TMP
+    new_tmp; adapter_pre_err=$WT_AXI_NEW_TMP
+    if ! "$ADAPTER_EXEC" pre-retire --worktree "$FOUND_PATH" --branch "$FOUND_BRANCH" --target "$retire_target" >"$adapter_pre_out" 2>"$adapter_pre_err"; then
+      sed -n '1,160p' "$adapter_pre_err" >&2
+      operation_error adapter_failed "Trusted pre-retire adapter failed" "Repair the scoped runtime and retry"
+    fi
+    sed -n '1,160p' "$adapter_pre_err" >&2
+    adapter_result=completed
+  fi
+
+  new_tmp; retire_out=$WT_AXI_NEW_TMP
+  new_tmp; retire_err=$WT_AXI_NEW_TMP
+  if ! GTR_WORKTREES_DIR=.worktrees git -C "$FOUND_PATH" gtr rm "$FOUND_BRANCH" --delete-branch --yes >"$retire_out" 2>"$retire_err"; then
+    sed -n '1,200p' "$retire_err" >&2
+    operation_error retire_failed "GTR failed after the safety preflight" "Inspect stderr; the adapter is idempotent and may be retried after repair"
+  fi
+  sed -n '1,200p' "$retire_err" >&2
+
+  remote_result=preserved
+  if [ "$retire_remote" = true ]; then
+    retire_remote_name=${retire_target%%/*}
+    if ! git -C "$repo_root" push "$retire_remote_name" --delete "$FOUND_BRANCH" >&2; then
+      operation_error remote_delete_failed "Worktree/local branch retired, but remote branch deletion failed" "Inspect remote permissions and delete the branch explicitly"
+    fi
+    remote_result=deleted
+  fi
+
+  printf 'retire:\n'
+  printf '  path: %s\n' "$(toon_quote "$FOUND_PATH")"
+  printf '  branch: %s\n' "$(toon_quote "$FOUND_BRANCH")"
+  printf '  target: %s\n' "$(toon_quote "$retire_target")"
+  printf '  worktree: %s\n' "$(toon_quote removed)"
+  printf '  localBranch: %s\n' "$(toon_quote deleted)"
+  printf '  remoteBranch: %s\n' "$(toon_quote "$remote_result")"
+  printf '  adapter: %s\n' "$(toon_quote "$adapter_result")"
+}
+
+doctor_row() {
+  printf '%s\t%s\t%s\n' "$1" "$2" "$3" >>"$doctor_file"
+  [ "$2" != fail ] || doctor_failed=true
+}
+
+cmd_doctor() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --help|-h) print_command_help doctor; return 0 ;;
+      *) usage_error "Unknown flag for doctor: $1" "Valid flags: --help" ;;
+    esac
+  done
+  new_tmp; doctor_file=$WT_AXI_NEW_TMP
+  doctor_failed=false
+  if command -v git >/dev/null 2>&1; then doctor_row git pass "$(git --version)"; else doctor_row git fail "git not found"; fi
+  if command -v git-gtr >/dev/null 2>&1; then
+    doctor_gtr=$(git gtr version 2>/dev/null | head -n 1 || true)
+    case "$doctor_gtr" in *2.11.0*) doctor_row gtr pass "$doctor_gtr" ;; *) doctor_row gtr fail "expected v2.11.0; got ${doctor_gtr:-unknown}" ;; esac
+  else
+    doctor_row gtr fail "git-gtr not found"
+  fi
+  if command -v shasum >/dev/null 2>&1 || command -v sha256sum >/dev/null 2>&1; then doctor_row sha256 pass "available"; else doctor_row sha256 fail "shasum or sha256sum required"; fi
+  if [ -r "$WT_AXI_ROOT/contract/cli-contract.tsv" ] && [ -r "$WT_AXI_ROOT/contract/safety-rules.tsv" ]; then doctor_row contract pass "CLI and safety contracts readable"; else doctor_row contract fail "contract files missing"; fi
+  case "$(uname -s 2>/dev/null || true)" in Darwin) doctor_row platform pass "macOS" ;; Linux) doctor_row platform pass "Linux" ;; *) doctor_row platform fail "unsupported platform" ;; esac
+
+  if git rev-parse --show-toplevel >/dev/null 2>&1; then
+    doctor_repo=$(git rev-parse --show-toplevel)
+    if git -C "$doctor_repo" check-ignore -q .worktrees/wt-axi-probe 2>/dev/null; then doctor_row worktrees-ignore pass ".worktrees is ignored"; else doctor_row worktrees-ignore fail "add /.worktrees/ to .gitignore"; fi
+    adapter_status "$doctor_repo"
+    case "$ADAPTER_TRUST" in none) doctor_row adapter pass "not configured" ;; trusted) doctor_row adapter pass "trusted; runtime=$ADAPTER_RUNTIME activeAgent=$ADAPTER_ACTIVE" ;; *) doctor_row adapter fail "$ADAPTER_TRUST" ;; esac
+  else
+    doctor_row repository pass "not in a repository; repository checks skipped"
+  fi
+
+  doctor_count=$(awk 'END {print NR}' "$doctor_file")
+  printf 'checks[%s]{name,status,detail}:\n' "$doctor_count"
+  while IFS=$'\t' read -r doctor_name doctor_status doctor_detail; do
+    printf '  %s,%s,%s\n' "$(toon_quote "$doctor_name")" "$(toon_quote "$doctor_status")" "$(toon_quote "$doctor_detail")"
+  done <"$doctor_file"
+  [ "$doctor_failed" = false ] || return 1
+}
+
+cmd_version() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in --help|-h) print_command_help version; return 0 ;; *) usage_error "Unknown flag for version: $1" "Valid flags: --help" ;; esac
+  done
+  printf 'version: %s\n' "$(toon_quote "$WT_AXI_VERSION")"
+}
+
+main() {
+  if [ "$#" -eq 0 ]; then
+    cmd_status
+    return
+  fi
+  case "$1" in
+    --help|-h|help) print_top_help ;;
+    create) shift; cmd_create "$@" ;;
+    status) shift; cmd_status "$@" ;;
+    retire) shift; cmd_retire "$@" ;;
+    doctor) shift; cmd_doctor "$@" ;;
+    version|--version|-v) shift; cmd_version "$@" ;;
+    *) usage_error "Unknown command: $1" "Run wt-axi --help" ;;
+  esac
+}
+
+main "$@"

@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install shell lint
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Generated skill/help sync, contract, safety, and install tests
+        run: ./scripts/check.sh
+      - name: Cross-agent skill installation smoke
+        run: ./tests/skill-smoke.sh
+      - name: Agent Skills package discovery
+        run: npx -y skills add . --list
+
+  macos-smoke:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install shell lint
+        run: brew install shellcheck
+      - name: Clean macOS contract and installation smoke
+        run: ./scripts/check.sh

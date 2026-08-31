@@ -1,0 +1,9 @@
+primary	Never retire the primary worktree.
+dirty	Never retire a worktree with staged, unstaged, or untracked changes.
+detached	Never retire a detached worktree.
+current	Never retire the worktree containing the caller's current directory.
+active-agent	Never retire while the trusted adapter reports an active agent or active/unknown runtime.
+unmerged	Refresh the target ref and require ancestry or a merged provider record before mutation.
+adapter-order	Run trusted pre-retire only after all read-only safety gates pass.
+remote-branch	Delete a remote branch only with explicit --delete-remote-branch opt-in.
+force	Do not expose or use a force-retirement path.
