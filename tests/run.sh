@@ -195,6 +195,8 @@ WT_AXI_FIXTURE_MARKER="$default_marker" bash -c 'cd "$1" && wt-axi retire --path
 validate_toon "$retire_out"
 [ -s "$default_marker" ] || fail "trusted pre-retire adapter did not run"
 [ ! -d "$fixture/.worktrees/sample-wt-merged-default" ] || fail "merged worktree remains"
+if git -C "$fixture" show-ref --verify --quiet refs/heads/feat/merged-default; then fail "local branch remains after retirement"; fi
+assert_contains "$retire_out" 'localBranch: "deleted"' "retire reports verified local branch deletion"
 git --git-dir="$origin" show-ref --verify --quiet refs/heads/feat/merged-default || fail "remote branch should be preserved"
 pass "safe retire runs adapter and preserves remote branch by default"
 

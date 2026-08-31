@@ -537,6 +537,16 @@ cmd_retire() {
   fi
   sed -n '1,200p' "$retire_err" >&2
 
+  local_result=deleted
+  if git -C "$repo_root" show-ref --verify --quiet "refs/heads/$FOUND_BRANCH"; then
+    local_head=$(git -C "$repo_root" rev-parse "refs/heads/$FOUND_BRANCH" 2>/dev/null || true)
+    [ "$local_head" = "$FOUND_HEAD" ] || operation_error local_branch_changed "Worktree retired, but local branch moved during cleanup" "Inspect $FOUND_BRANCH before deleting it"
+    if ! git -C "$repo_root" update-ref -d "refs/heads/$FOUND_BRANCH" "$FOUND_HEAD"; then
+      operation_error local_delete_failed "Worktree retired, but the proven local branch remains" "Delete $FOUND_BRANCH after confirming it still points to $FOUND_HEAD"
+    fi
+    printf 'Removed local branch left by GTR: %s\n' "$FOUND_BRANCH" >&2
+  fi
+
   remote_result=preserved
   if [ "$retire_remote" = true ]; then
     retire_remote_name=${retire_target%%/*}
@@ -551,7 +561,7 @@ cmd_retire() {
   printf '  branch: %s\n' "$(toon_quote "$FOUND_BRANCH")"
   printf '  target: %s\n' "$(toon_quote "$retire_target")"
   printf '  worktree: %s\n' "$(toon_quote removed)"
-  printf '  localBranch: %s\n' "$(toon_quote deleted)"
+  printf '  localBranch: %s\n' "$(toon_quote "$local_result")"
   printf '  remoteBranch: %s\n' "$(toon_quote "$remote_result")"
   printf '  adapter: %s\n' "$(toon_quote "$adapter_result")"
 }

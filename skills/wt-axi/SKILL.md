@@ -1,13 +1,13 @@
 ---
 name: wt-axi
-description: Safely create, inspect, or retire Git worktrees for agent tasks with platform naming, machine-readable preflight, merge proof, and guarded cleanup. Use for worktree lifecycle requests; do not use for ordinary branch-only Git operations.
+description: Safely create, inspect, and retire Git worktrees across an agent task lifecycle with platform naming, machine-readable preflight, merge proof, and guarded terminal cleanup. Use when implementation needs a task worktree, when auditing worktrees, or when completed work should retire its local worktree; do not use for ordinary branch-only Git operations.
 ---
 
 # wt-axi
 
 Use `wt-axi` as the project-agnostic lifecycle boundary. It delegates Git worktree primitives to the pinned upstream engine and adds platform naming, TOON output, and retirement safety gates.
 
-This skill does not grant cleanup authority. Create a worktree only within an implementation task. Retire one only after explicit cleanup intent or a terminal workflow with proven merge. Never bypass wt-axi with raw removal commands.
+Create a worktree only within an implementation task. When that task already authorized a task-specific worktree, a successfully completed terminal workflow should retire the local worktree after delivery and merge are proven, unless the user asked to preserve it. This terminal cleanup does not authorize remote-branch deletion. Never bypass wt-axi with raw removal commands.
 
 ## Commands
 
@@ -19,11 +19,12 @@ This skill does not grant cleanup authority. Create a worktree only within an im
 
 ## Workflow
 
-1. Run `wt-axi status` before creating or retiring anything. Read `retireSafe`; do not infer safety from a clean-looking folder.
-2. For creation, derive a short lowercase kebab-case task slug and run `wt-axi create --task-slug <slug> --branch <branch>`. Work only in the returned `<repo>/.worktrees/<project>-wt-<task-slug>` path.
-3. For retirement, leave the target worktree first. Run `wt-axi retire --path <path>` and preserve the remote branch by default.
-4. Add `--delete-remote-branch` only when the user explicitly asked to delete that remote branch. Do not treat a general cleanup request as remote deletion consent.
-5. On any non-zero result, report the structured error and follow its help field. Never retry with force or run upstream hooks directly.
+1. At implementation start, run `wt-axi status`, derive a short lowercase kebab-case task slug, and create the task worktree with `wt-axi create --task-slug <slug> --branch <branch>`. Work only in the returned `<repo>/.worktrees/<project>-wt-<task-slug>` path.
+2. Do not run retirement merely because a session started or while implementation, review, delivery, or merge work remains active.
+3. At successful terminal completion, leave the task worktree, return to the primary worktree, and run `wt-axi status --target <ref>`. Read `retireSafe`; do not infer safety from a clean-looking folder.
+4. When `retireSafe` is true, run `wt-axi retire --path <path> --target <ref>` as the normal final local cleanup. When it is false, preserve the worktree and report the exact blocker.
+5. Preserve the remote branch by default. Add `--delete-remote-branch` only when the user explicitly asked to delete that remote branch; terminal completion alone is not consent.
+6. On any non-zero result, report the structured error and follow its help field. Never retry with force or run upstream hooks directly.
 
 ## Safety contract
 

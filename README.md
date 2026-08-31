@@ -2,7 +2,7 @@
 
 `wt-axi` is a small, agent-facing safety and machine-output layer for Git
 worktree lifecycle. It does not replace Git or implement a second worktree
-engine. Version 0.1.0 delegates creation/removal to
+engine. Version 0.1.1 delegates creation/removal to
 [`git-worktree-runner` v2.11.0](https://github.com/coderabbitai/git-worktree-runner/releases/tag/v2.11.0)
 and owns only platform naming, TOON output, ordered retirement preflight, and a
 generic project-adapter boundary.
@@ -58,8 +58,12 @@ npx -y skills update wt-axi -g -y
 npx -y skills remove wt-axi -g --agent codex claude-code opencode -y
 ```
 
-The skill is project-agnostic and does not grant cleanup permission. Remote
-branch deletion still requires the explicit CLI flag and explicit user intent.
+The skill is project-agnostic. For implementation tasks that already authorize
+a task-specific worktree, it creates the worktree at the start and treats
+`status` followed by safe local `retire` as the normal terminal step after
+delivery and merge are proven. It does not run retirement merely because a
+session started. Remote-branch deletion still requires the explicit CLI flag
+and explicit user intent; terminal completion alone is not consent.
 
 ## Platform naming
 
@@ -95,7 +99,7 @@ after every Git and active-agent gate passes. See
 | wt-axi | naming, TOON, preflight ordering, explicit branch semantics, adapter verification |
 | Consumer repository | runtime status/teardown implementation and its integration evidence |
 
-Version 0.1.0 has no TUI, daemon, database, background scanner, session
+Version 0.1.1 has no TUI, daemon, database, background scanner, session
 manager, product adapter, product runtime commands, `--force` path, fork, or
 copied upstream source.
 

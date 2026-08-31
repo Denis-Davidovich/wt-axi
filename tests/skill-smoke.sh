@@ -20,7 +20,8 @@ for agent in codex claude-code opencode; do
 
   candidate=$(find "$project" -type f -path '*/wt-axi/SKILL.md' -print -quit)
   [ -n "$candidate" ] || { printf 'error: skill was not discoverable for %s\n' "$agent" >&2; exit 1; }
-  grep -Fq 'Safely create, inspect, or retire Git worktrees' "$candidate"
+  grep -Fq 'guarded terminal cleanup' "$candidate"
+  grep -Fq 'completed work should retire its local worktree' "$candidate"
   grep -Fq '<repo>/.worktrees/<project>-wt-<task-slug>' "$candidate"
   grep -Fq 'wt-axi status' "$candidate"
   grep -Fq 'wt-axi retire --path' "$candidate"
