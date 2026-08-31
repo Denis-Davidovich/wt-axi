@@ -207,12 +207,28 @@ if git --git-dir="$origin" show-ref --verify --quiet refs/heads/feat/remote-dele
 pass "explicit remote branch deletion works"
 
 install_prefix="$TEST_ROOT/prefix"
-PATH="/usr/bin:/bin" "$ROOT/scripts/install.sh" --prefix "$install_prefix" --gtr-source "$gtr_source" >"$TEST_ROOT/install.toon"
+isolated_path="/usr/bin:/bin"
+if PATH="$isolated_path" command -v wt-axi >/dev/null 2>&1; then
+  fail "isolated PATH unexpectedly contains wt-axi"
+fi
+pass "missing shared wt-axi binary is reproduced in an isolated PATH"
+
+PATH="$isolated_path" "$ROOT/scripts/install.sh" --prefix "$install_prefix" --gtr-source "$gtr_source" >"$TEST_ROOT/install.toon"
 [ -x "$install_prefix/bin/wt-axi" ] || fail "installed wt-axi missing"
-PATH="$install_prefix/bin:/usr/bin:/bin" bash -c 'cd "$1" && wt-axi doctor' _ "$fixture" >"$TEST_ROOT/doctor.toon"
+installed_path="$install_prefix/bin:$isolated_path"
+resolved_wt_axi=$(PATH="$installed_path" command -v wt-axi)
+[ "$resolved_wt_axi" = "$install_prefix/bin/wt-axi" ] || fail "installed wt-axi is not discoverable through PATH"
+pass "installer publishes the shared wt-axi binary through prefix bin"
+
+PATH="$installed_path" bash -c 'cd "$1" && wt-axi doctor' _ "$fixture" >"$TEST_ROOT/doctor.toon"
 validate_toon "$TEST_ROOT/doctor.toon"
-PATH="/usr/bin:/bin" "$ROOT/scripts/uninstall.sh" --prefix "$install_prefix" >"$TEST_ROOT/uninstall.toon"
+pass "PATH-resolved wt-axi runs successfully in a fresh shell"
+
+PATH="$isolated_path" "$ROOT/scripts/uninstall.sh" --prefix "$install_prefix" >"$TEST_ROOT/uninstall.toon"
 [ ! -e "$install_prefix/bin/wt-axi" ] || fail "uninstall left wt-axi link"
-pass "install, doctor, and uninstall smoke passes"
+if PATH="$installed_path" command -v wt-axi >/dev/null 2>&1; then
+  fail "uninstalled wt-axi remains discoverable through PATH"
+fi
+pass "uninstall removes the shared wt-axi binary from PATH"
 
 printf '1..%s\n' "$PASS_COUNT"
