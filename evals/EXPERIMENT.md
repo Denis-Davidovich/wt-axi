@@ -82,9 +82,11 @@ tool-enabled agent will perform or skip the corresponding Git operations.
 - Sonnet and Opus are moving aliases; repeat runs should record the resolved
   provider model ID when the CLI exposes it.
 - There are no paraphrase repetitions or confidence intervals in v0.
-- The next gate is a tool-enabled behavioral sandbox: give each agent an
-  isolated Git fixture, intercept `wt-axi create`, and verify actual tool calls
-  and filesystem placement for both decision classes.
+- Codex now has a tool-enabled behavioral sandbox in
+  `tests/model-behavior-eval.sh`: it uses isolated Git fixtures, intercepts
+  `wt-axi` through a recording test double, and verifies actual tool calls and
+  filesystem placement for both decision classes. Equivalent Claude and
+  OpenCode behavior runs remain future coverage.
 
 ## Reproduce
 

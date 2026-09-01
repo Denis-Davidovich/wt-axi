@@ -14,6 +14,10 @@ if [ "${WT_AXI_RUN_MODEL_EVAL:-0}" = 1 ]; then
   "$ROOT/tests/model-decision-eval.sh" --provider all
 fi
 
+if [ "${WT_AXI_RUN_BEHAVIOR_EVAL:-0}" = 1 ]; then
+  "$ROOT/tests/model-behavior-eval.sh"
+fi
+
 if command -v shellcheck >/dev/null 2>&1; then
   shellcheck "$ROOT/bin/wt-axi" "$ROOT/scripts/"*.sh "$ROOT/tests/"*.sh "$ROOT/tests/fixtures/adapter.sh"
 else
