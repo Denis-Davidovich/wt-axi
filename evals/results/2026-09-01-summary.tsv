@@ -1,0 +1,5 @@
+model	provider	passed	total	unsafe_false_negatives	over_isolation_false_positives
+sonnet	claude	12	12	0	0
+opus	claude	12	12	0	0
+gpt-5.6-terra	codex	12	12	0	0
+gpt-5.6-sol	codex	12	12	0	0

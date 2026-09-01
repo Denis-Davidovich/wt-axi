@@ -58,12 +58,39 @@ npx -y skills update wt-axi -g -y
 npx -y skills remove wt-axi -g --agent codex claude-code opencode -y
 ```
 
-The skill is project-agnostic. For implementation tasks that already authorize
-a task-specific worktree, it creates the worktree at the start and treats
-`status` followed by safe local `retire` as the normal terminal step after
-delivery and merge are proven. It does not run retirement merely because a
-session started. Remote-branch deletion still requires the explicit CLI flag
-and explicit user intent; terminal completion alone is not consent.
+The skill is project-agnostic. It does not create a worktree for read-only work.
+For implementation, an in-place edit is allowed only when all of these are
+true:
+
+- neither the user nor repository instructions require a separate worktree;
+- the change is small, localized, reversible, and does not include dependency
+  changes, schema or data migrations, or bulk-generated output;
+- the current worktree is the intended base and the files to be edited contain
+  no unrelated changes;
+- no other agent or task will write to the repository concurrently;
+- the task needs no independent branch, commit, pull request, merge, or handoff;
+- validation is bounded and does not require persistent services or scoped
+  runtime resources.
+
+If any condition is false or unknown, the skill creates a task-specific
+worktree at the start. A typo, wording correction, or similarly local config
+edit will normally qualify for in-place work; a feature, cross-cutting bug fix,
+refactor, migration, dependency update, or parallel-agent task will not.
+
+### Host instruction compatibility
+
+A higher-priority global or repository `AGENTS.md` can override the skill. A
+naming convention must therefore say explicitly that it applies only after a
+separate worktree has been judged necessary; an unconditional instruction such
+as “Create task-specific Git worktrees” makes every implementation task require
+one before the skill can apply its decision policy. A compatible platform
+example is tracked at [examples/platform-AGENTS.md](examples/platform-AGENTS.md).
+
+For tasks that use a worktree, `status` followed by safe local `retire` is the
+normal terminal step after delivery and merge are proven. The skill does not
+run retirement merely because a session started. Remote-branch deletion still
+requires the explicit CLI flag and explicit user intent; terminal completion
+alone is not consent.
 
 ## Platform naming
 
@@ -108,7 +135,60 @@ copied upstream source.
 ```sh
 ./scripts/check.sh
 ./scripts/generate-skill.sh --check
+./scripts/generate-model-eval-dataset.sh --check
+
+# Paid model-in-the-loop conformance eval (requires authenticated CLIs)
+./tests/model-decision-eval.sh --provider all
+WT_AXI_RUN_MODEL_EVAL=1 ./scripts/check.sh
+
+# Tool-enabled Codex regression: observes actual wt-axi calls and filesystem
+./tests/model-behavior-eval.sh --output-dir /tmp/wt-axi-behavior-results
+WT_AXI_RUN_BEHAVIOR_EVAL=1 ./scripts/check.sh
+
+# Requested four-model matrix with preserved response artifacts
+./evals/run-model-matrix.sh --output-dir /tmp/wt-axi-model-results
 ```
+
+The model eval supplies the generated skill and a decision corpus to Codex,
+Claude Code, and OpenCode, then requires every model to classify every scenario
+as `in-place` or `worktree`. It is opt-in so the default checks remain
+deterministic, credential-free, and free of model-token cost. A provider can be
+tested alone with `--provider codex`, `claude`, or `opencode`; model overrides
+are available through `WT_AXI_EVAL_CODEX_MODEL`,
+`WT_AXI_EVAL_CLAUDE_MODEL`, and `WT_AXI_EVAL_OPENCODE_MODEL`.
+
+The tool-enabled behavior eval installs the generated skill and the compatible
+platform `AGENTS.md` into disposable Git fixtures. It verifies that Codex edits
+a qualifying documentation task in place without calling `wt-axi create`, then
+verifies that an explicitly isolated branch/PR task calls `wt-axi status` and
+`wt-axi create` and receives a platform-named `.worktrees/` path. A PATH-local
+test double records the actual CLI calls and avoids creating real secondary
+worktrees during the eval.
+
+The Langfuse-ready dataset is generated at
+`evals/worktree-decision-dataset.jsonl`. The requested matrix runs Claude
+Sonnet, Claude Opus, GPT-5.6 Terra, and GPT-5.6 Sol once each against all
+scenarios and preserves per-model prompts, responses, and per-item exact-match
+results for experiment ingestion.
+The hypothesis, corpus distribution, acceptance gates, results, and limitations
+are summarized in [evals/EXPERIMENT.md](evals/EXPERIMENT.md).
+
+The target Langfuse instance currently runs v3, so experiment ingestion uses
+the latest compatible Python SDK rather than the v4-only Experiments API:
+
+```sh
+LANGFUSE_BASE_URL=https://langfuse.example.com \
+LANGFUSE_PUBLIC_KEY=pk-lf-example \
+LANGFUSE_SECRET_KEY=sk-lf-example \
+uv run --with 'langfuse==3.15.0' python evals/upload-langfuse.py \
+  --dataset-file evals/worktree-decision-dataset.jsonl \
+  --results-dir /tmp/wt-axi-model-results
+```
+
+Set real keys through the environment; never pass or commit them as command-line
+arguments. The uploader creates a versioned dataset with input/output schemas,
+uses stable item IDs for idempotent updates, creates one dataset run per model,
+and records a boolean `exact_match` score for every scenario.
 
 The decision record is [DEPENDENCIES.md](DEPENDENCIES.md). The research gate is
 the production Planner goal

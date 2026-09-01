@@ -22,6 +22,9 @@ for agent in codex claude-code opencode; do
   [ -n "$candidate" ] || { printf 'error: skill was not discoverable for %s\n' "$agent" >&2; exit 1; }
   grep -Fq 'guarded terminal cleanup' "$candidate"
   grep -Fq 'completed work should retire its local worktree' "$candidate"
+  grep -Fq 'A separate worktree is optional only when every condition below is true' "$candidate"
+  grep -Fq 'If any condition is false or unknown, use a task-specific worktree' "$candidate"
+  grep -Fq 'For read-only or qualifying in-place work' "$candidate"
   grep -Fq '<repo>/.worktrees/<project>-wt-<task-slug>' "$candidate"
   grep -Fq 'wt-axi status' "$candidate"
   grep -Fq 'wt-axi retire --path' "$candidate"

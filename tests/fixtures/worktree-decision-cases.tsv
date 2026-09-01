@@ -1,0 +1,12 @@
+readonly-review	in-place	Review the current implementation and explain findings without changing files.
+docs-typo	in-place	Fix one typo in README.md; the current worktree is the intended base, the file is clean, nobody else is writing, no independent delivery is needed, and validation is local.
+local-code-fix	in-place	Correct one conditional in one source file; the current base and target are clean, there are no parallel writers, no dependency or generated changes, no persistent resources, and no branch, commit, PR, merge, or handoff is needed.
+unrelated-target-edits	worktree	Make a one-line wording fix in a file that already contains unrelated user edits.
+parallel-writer	worktree	Make a one-line code fix while another agent is writing to the same repository.
+dependency-update	worktree	Update one dependency version and its lockfile; everything else is clean and there are no parallel writers.
+schema-migration	worktree	Add a small database schema migration.
+bulk-generation	worktree	Change one generator input and regenerate its bulk output.
+independent-pr	worktree	Make a localized fix that must be delivered through its own branch and pull request.
+persistent-runtime	worktree	Make a localized change whose validation starts persistent scoped runtime resources.
+explicit-requirement	worktree	Fix a typo, but the user explicitly requires a separate task worktree.
+unknown-parallel-state	worktree	Make a localized reversible edit, but it is unknown whether another task is writing to the repository.
