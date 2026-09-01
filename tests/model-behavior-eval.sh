@@ -213,12 +213,20 @@ run_codex "$required_fixture" "$required_prompt" "$required_response" \
   "$required_stdout" "$required_stderr"
 copy_artifacts required-worktree "$required_fixture" "$required_response" \
   "$required_stdout" "$required_stderr"
-grep -Eq '(^| )status( |$)' "$required_fixture/calls.log" || {
+status_line=$(grep -nE '(^| )status( |$)' "$required_fixture/calls.log" |
+  head -n1 | cut -d: -f1)
+[ -n "$status_line" ] || {
   printf 'error: Codex did not invoke wt-axi status before creation\n' >&2
   exit 1
 }
-grep -Eq '(^| )create( |$)' "$required_fixture/calls.log" || {
+create_line=$(grep -nE '(^| )create( |$)' "$required_fixture/calls.log" |
+  head -n1 | cut -d: -f1)
+[ -n "$create_line" ] || {
   printf 'error: Codex did not invoke wt-axi create for the required task\n' >&2
+  exit 1
+}
+[ "$status_line" -lt "$create_line" ] || {
+  printf 'error: Codex invoked wt-axi create before status\n' >&2
   exit 1
 }
 required_path=$(find "$required_fixture/.worktrees" -mindepth 1 -maxdepth 1 \
