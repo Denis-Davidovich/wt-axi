@@ -17,18 +17,18 @@ usage() {
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --model)
-      [ "$#" -ge 2 ] && [ -n "$2" ] && [ "${2#-}" = "$2" ] || {
+      if [ "$#" -lt 2 ] || [ -z "$2" ] || [ "${2#-}" != "$2" ]; then
         printf 'error: --model requires a value\n' >&2
         exit 2
-      }
+      fi
       MODEL_OVERRIDE=$2
       shift 2
       ;;
     --output-dir)
-      [ "$#" -ge 2 ] && [ -n "$2" ] && [ "${2#-}" = "$2" ] || {
+      if [ "$#" -lt 2 ] || [ -z "$2" ] || [ "${2#-}" != "$2" ]; then
         printf 'error: --output-dir requires a path\n' >&2
         exit 2
-      }
+      fi
       OUTPUT_DIR=$2
       shift 2
       ;;
