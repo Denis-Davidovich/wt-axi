@@ -1,6 +1,13 @@
 # wt-axi repository instructions
 
-- Keep implementation work in `.worktrees/wt-axi-wt-<task-slug>`.
+- Keep implementation work that needs isolation in
+  `.worktrees/wt-axi-wt-<task-slug>`. An in-place edit is allowed only when the
+  change is small, localized, and reversible; the current worktree is the
+  intended base; target files have no unrelated edits; there are no parallel
+  writers; no independent branch, commit, PR, merge, or handoff is needed; and
+  the task has no dependency changes, migrations, bulk generation, or
+  persistent runtime resources. Explicit user requirements take precedence. If
+  any condition is false or unknown, use a worktree.
 - Maintain Bash 3.2 compatibility; macOS ships Bash 3.2.
 - Keep stdout valid TOON. Diagnostics and wrapped-tool output belong on stderr.
 - Reject unknown flags and missing required values before invoking Git, GTR, an
