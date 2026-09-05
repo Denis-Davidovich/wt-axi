@@ -18,6 +18,8 @@ from langfuse import Langfuse
 from opentelemetry import trace
 from typing import Any
 
+EXPERIMENT_ENVIRONMENT = "experiment"
+
 
 @dataclass
 class PublishedItem:
@@ -146,6 +148,8 @@ def confirm_publication(client, dataset_id, result, decisions, started_at, timeo
                     or decode_io(row.output) != output
                     or decode_io(row.expected_output) != source.item.expected_output):
                 raise ValueError("experiment item readback does not match its source scenario")
+            if row.environment != EXPERIMENT_ENVIRONMENT:
+                raise ValueError("experiment item readback is not in the experiment environment")
             value = output["decision"] == source.item.expected_output["decision"]
             scores = [score for score in (row.scores or []) if score.name == "exact_match"]
             if len(scores) == 1:
@@ -153,8 +157,11 @@ def confirm_publication(client, dataset_id, result, decisions, started_at, timeo
                 subject = score.subject
                 if (score.data_type != "BOOLEAN" or score.value != value
                         or subject is None or subject.kind != "observation"
-                        or subject.id != row.id or subject.trace_id != row.trace_id):
+                        or subject.id != row.id
+                        or (subject.trace_id is not None and subject.trace_id != row.trace_id)):
                     raise ValueError("exact_match score does not match its source item/root")
+                if score.environment != EXPERIMENT_ENVIRONMENT:
+                    raise ValueError("exact_match score is not in the experiment environment")
                 confirmed.add(row.experiment_item_id)
             elif len(scores) > 1:
                 raise ValueError("duplicate exact_match score in readback")
@@ -254,14 +261,14 @@ def main() -> None:
                     "langfuse.experiment.metadata.model": model,
                     "langfuse.experiment.metadata.executionMode": "single-batch-call",
                     "langfuse.experiment.metadata.policy": "skills/wt-axi/SKILL.md",
-                    "langfuse.environment": "experiment",
+                    "langfuse.environment": EXPERIMENT_ENVIRONMENT,
                 })
                 result.item_results.append(PublishedItem(item, span.trace_id))
             client.flush()
             client.api.scores.create(
                 id=str(uuid.uuid4()), name="exact_match", value=float(observed == expected),
                 data_type="BOOLEAN", trace_id=span.trace_id, observation_id=span.id,
-                environment="experiment",
+                environment=EXPERIMENT_ENVIRONMENT,
                 comment=f"expected={expected}; observed={observed}",
                 request_options={"timeout_in_seconds": 15, "max_retries": 0},
             )

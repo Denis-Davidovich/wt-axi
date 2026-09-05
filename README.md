@@ -205,7 +205,8 @@ so the uploader publishes SDK observations with OTEL experiment attributes
 instead. The SDK score convenience method sends a `score-create` ingestion event,
 which is not deprecated; the uploader nevertheless creates scores through the
 direct Scores API because that call returns a per-write response instead of a
-fire-and-forget batch. Observations and scores share `environment=experiment`. The uploader then polls v4 experiment
+fire-and-forget batch. Observations and scores share `environment=experiment`,
+and the readback rejects any item or score outside that environment. The uploader then polls v4 experiment
 items for up to 30 seconds (`--confirm-timeout`) and checks each item/output/
 expected output and root-linked score before printing success; a rejected or
 mismatched publication exits non-zero, and a timeout lists the unconfirmed

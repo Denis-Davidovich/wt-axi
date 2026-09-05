@@ -18,7 +18,7 @@ STAMP = "2026-09-01T00:00:00Z"
 
 
 class UploadTest(unittest.TestCase):
-    def run_upload(self, swap_score=False, drop_score_for=None, confirm_timeout=None):
+    def run_upload(self, readback=None, drop_score_for=None, confirm_timeout=None):
         items, roots, scores, requests = {}, {}, [], []
         dataset = {"id": "dataset-id", "name": "synthetic", "projectId": "project-id", "createdAt": STAMP, "updatedAt": STAMP, "description": None, "metadata": {}, "inputSchema": None, "expectedOutputSchema": None}
 
@@ -72,12 +72,24 @@ class UploadTest(unittest.TestCase):
                 if path == "/api/public/experiment-items":
                     data = []
                     for root in roots.values():
+                        other = next((r for r in roots.values() if r["id"] != root["id"]), root)
                         linked = []
                         for score in scores:
                             if score.get("observationId") != root["id"]:
                                 continue
-                            linked.append({"id": score.get("id", "score-id"), "projectId": "project-id", "name": score["name"], "source": "API", "timestamp": STAMP, "createdAt": STAMP, "updatedAt": STAMP, "environment": score.get("environment", "default"), "dataType": "BOOLEAN", "value": bool(score["value"]), "subject": {"kind": "observation", "id": "wrong-root" if swap_score else root["id"], "traceId": root["traceId"]}})
-                        data.append({**root, **{key: json.dumps(root[key]) for key in ("input", "output", "expectedOutput")}, "scores": linked})
+                            subject = {"kind": "observation", "id": root["id"], "traceId": root["traceId"]}
+                            if readback == "swap-root-ids":
+                                subject["id"] = other["id"]
+                            elif readback == "omit-subject-trace-id":
+                                del subject["traceId"]
+                            elif readback == "wrong-subject-trace-id":
+                                subject["traceId"] = other["traceId"]
+                            score_environment = "default" if readback == "score-default-environment" else score.get("environment", "default")
+                            linked.append({"id": score.get("id", "score-id"), "projectId": "project-id", "name": score["name"], "source": "API", "timestamp": STAMP, "createdAt": STAMP, "updatedAt": STAMP, "environment": score_environment, "dataType": "BOOLEAN", "value": bool(score["value"]), "subject": subject})
+                        row = {**root, **{key: json.dumps(root[key]) for key in ("input", "output", "expectedOutput")}, "scores": linked}
+                        if readback == "item-default-environment":
+                            row["environment"] = "default"
+                        data.append(row)
                     return self.send({"data": data, "meta": {}})
                 return self.send({"message": "Unexpected endpoint"}, 400)
 
@@ -131,11 +143,37 @@ class UploadTest(unittest.TestCase):
             if path == "/api/public/otel/v1/traces":
                 self.assertEqual("4", version)
 
-    def test_wrong_root_score_fails_without_success_summary(self):
-        result, _, _, _ = self.run_upload(swap_score=True)
+    def assert_rejected(self, result, message):
         self.assertNotEqual(0, result.returncode)
-        self.assertIn("score does not match its source item/root", result.stderr)
+        self.assertIn(message, result.stderr)
         self.assertNotIn("langfuseUpload:", result.stdout)
+
+    def test_swapped_real_root_ids_fail_without_success_summary(self):
+        result, roots, scores, _ = self.run_upload(readback="swap-root-ids", confirm_timeout=2)
+        self.assertEqual(2, len(roots))
+        self.assertEqual(2, len(scores))
+        self.assertEqual(2, len({r["id"] for r in roots.values()}))
+        self.assert_rejected(result, "score does not match its source item/root")
+
+    def test_missing_optional_subject_trace_id_is_confirmed_through_row_trace(self):
+        result, roots, scores, _ = self.run_upload(readback="omit-subject-trace-id")
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("scores: 2", result.stdout)
+        for root in roots.values():
+            score = next(s for s in scores if s["observationId"] == root["id"])
+            self.assertEqual(root["traceId"], score["traceId"])
+
+    def test_present_subject_trace_id_of_other_case_fails(self):
+        result, _, _, _ = self.run_upload(readback="wrong-subject-trace-id", confirm_timeout=2)
+        self.assert_rejected(result, "score does not match its source item/root")
+
+    def test_score_outside_experiment_environment_fails(self):
+        result, _, _, _ = self.run_upload(readback="score-default-environment", confirm_timeout=2)
+        self.assert_rejected(result, "score is not in the experiment environment")
+
+    def test_item_outside_experiment_environment_fails(self):
+        result, _, _, _ = self.run_upload(readback="item-default-environment", confirm_timeout=2)
+        self.assert_rejected(result, "experiment item readback is not in the experiment environment")
 
     def test_repeated_runs_are_separate_experiment_attempts_with_stable_item_ids(self):
         first, first_roots, _, _ = self.run_upload()
