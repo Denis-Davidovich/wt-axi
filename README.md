@@ -173,22 +173,34 @@ results for experiment ingestion.
 The hypothesis, corpus distribution, acceptance gates, results, and limitations
 are summarized in [evals/EXPERIMENT.md](evals/EXPERIMENT.md).
 
-The target Langfuse instance currently runs v3, so experiment ingestion uses
-the latest compatible Python SDK rather than the v4-only Experiments API:
+The target Langfuse instance runs v4. The uploader uses SDK v4 observations with the OTEL experiment attributes
+and confirms each item and its root-linked score through the Experiments API:
 
 ```sh
 LANGFUSE_BASE_URL=https://langfuse.example.com \
 LANGFUSE_PUBLIC_KEY=pk-lf-example \
 LANGFUSE_SECRET_KEY=sk-lf-example \
-uv run --with 'langfuse==3.15.0' python evals/upload-langfuse.py \
+uv run --with 'langfuse==4.14.4' python evals/upload-langfuse.py \
   --dataset-file evals/worktree-decision-dataset.jsonl \
   --results-dir /tmp/wt-axi-model-results
 ```
 
 Set real keys through the environment; never pass or commit them as command-line
 arguments. The uploader creates a versioned dataset with input/output schemas,
-uses stable item IDs for idempotent updates, creates one dataset run per model,
-and records a boolean `exact_match` score for every scenario.
+uses stable item IDs for idempotent updates, creates one v4 experiment per model,
+and records a boolean `exact_match` score for every scenario. The transport sends
+`x-langfuse-ingestion-version: 4` explicitly. SDK experiment/score convenience
+methods still contain legacy writes, so the uploader uses SDK observations with
+OTEL experiment attributes and the dedicated scores API. It polls v4 experiment
+items for up to 30 seconds and checks each item/output/expected output and
+root-linked score before printing success; a rejected or mismatched publication
+exits non-zero. Polling only reads data and never resends observations.
+
+Offline SDK/HTTP contract test (no LLM calls or production credentials):
+
+```sh
+uv run --with 'langfuse==4.14.4' python -m unittest discover -s evals -p 'test_*.py'
+```
 
 The decision record is [DEPENDENCIES.md](DEPENDENCIES.md). The research gate is
 the production Planner goal

@@ -98,7 +98,7 @@ tool-enabled agent will perform or skip the corresponding Git operations.
 After Langfuse project credentials are available through the environment:
 
 ```sh
-uv run --with 'langfuse==3.15.0' python evals/upload-langfuse.py \
+uv run --with 'langfuse==4.14.4' python evals/upload-langfuse.py \
   --dataset-file evals/worktree-decision-dataset.jsonl \
   --results-dir /tmp/wt-axi-model-results
 ```
