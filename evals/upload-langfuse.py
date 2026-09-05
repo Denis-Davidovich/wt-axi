@@ -28,7 +28,13 @@ class PublishedItem:
 @dataclass
 class PublishedExperiment:
     experiment_id: str
+    experiment_name: str
     item_results: list[PublishedItem]
+
+
+def experiment_attempt_name(run_prefix: str, model: str, started_at: datetime, experiment_id: str) -> str:
+    stamp = started_at.strftime("%Y%m%dT%H%M%SZ")
+    return f"{run_prefix}/{model}/{stamp}-{experiment_id[:8]}"
 
 
 def parse_args() -> argparse.Namespace:
@@ -37,6 +43,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset-file", type=Path, required=True)
     parser.add_argument("--results-dir", type=Path, required=True)
     parser.add_argument("--run-prefix", default="wt-axi-policy-v0-2026-09-01")
+    parser.add_argument("--confirm-timeout", type=float, default=30.0)
     return parser.parse_args()
 
 
@@ -93,6 +100,18 @@ def confirm_publication(client, dataset_id, result, decisions, started_at, timeo
     """Read-only polling: flush completion alone does not prove server acceptance."""
     expected = {row.item.id: row for row in result.item_results}
     deadline = time.monotonic() + timeout
+    confirmed: set[str] = set()
+    received = 0
+
+    def unconfirmed() -> TimeoutError:
+        missing = sorted(set(expected) - confirmed)
+        return TimeoutError(
+            f"Langfuse did not confirm {len(missing)} of {len(expected)} experiment items "
+            f"for experiment {result.experiment_id} within {timeout:g}s "
+            f"(last readback returned {received} rows); "
+            f"unconfirmed dataset item ids: {', '.join(missing)}"
+        )
+
     while True:
         rows = []
         cursor = None
@@ -100,7 +119,7 @@ def confirm_publication(client, dataset_id, result, decisions, started_at, timeo
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise TimeoutError("Langfuse did not confirm every experiment item and score")
+                raise unconfirmed()
             page = client.api.experiments.list_items(
                 from_start_time=started_at, experiment_id=result.experiment_id,
                 dataset_id=dataset_id, fields="core,dataset,io,scores", limit=100,
@@ -113,6 +132,7 @@ def confirm_publication(client, dataset_id, result, decisions, started_at, timeo
             if cursor in cursors:
                 raise ValueError("experiment item pagination repeated a cursor")
             cursors.add(cursor)
+        received = len(rows)
         confirmed = set()
         for row in rows:
             source = expected.get(row.experiment_item_id)
@@ -141,7 +161,7 @@ def confirm_publication(client, dataset_id, result, decisions, started_at, timeo
         if confirmed == set(expected):
             return len(confirmed)
         if time.monotonic() >= deadline:
-            raise TimeoutError("Langfuse did not confirm every experiment item and score")
+            raise unconfirmed()
         time.sleep(0.5)
 
 
@@ -204,14 +224,15 @@ def main() -> None:
         raise ValueError("remote dataset scenarios do not match the local corpus")
 
     scores_created = 0
-    experiment_ids = []
+    experiments = []
     for model, decisions in model_results.items():
         if set(decisions) != expected_ids:
             raise ValueError(f"result scenarios do not match the corpus: {model}")
-        run_name = f"{args.run_prefix}/{model}"
         started_at = datetime.now(timezone.utc)
+        experiment_id = str(uuid.uuid4())
+        run_name = experiment_attempt_name(args.run_prefix, model, started_at, experiment_id)
 
-        result = PublishedExperiment(str(uuid.uuid4()), [])
+        result = PublishedExperiment(experiment_id, run_name, [])
         for item in remote_items.values():
             observed = decisions[item.input["scenarioId"]]
             expected = item.expected_output["decision"]
@@ -240,19 +261,22 @@ def main() -> None:
             client.api.scores.create(
                 id=str(uuid.uuid4()), name="exact_match", value=float(observed == expected),
                 data_type="BOOLEAN", trace_id=span.trace_id, observation_id=span.id,
+                environment="experiment",
                 comment=f"expected={expected}; observed={observed}",
                 request_options={"timeout_in_seconds": 15, "max_retries": 0},
             )
         client.flush()
-        scores_created += confirm_publication(client, dataset.id, result, decisions, started_at)
-        experiment_ids.append(result.experiment_id)
+        scores_created += confirm_publication(
+            client, dataset.id, result, decisions, started_at, timeout=args.confirm_timeout
+        )
+        experiments.append({"id": result.experiment_id, "name": result.experiment_name})
 
     print("langfuseUpload:")
     print(f'  dataset: "{args.dataset}"')
     print(f"  items: {len(source_items)}")
     print(f"  runs: {len(model_results)}")
     print(f"  scores: {scores_created}")
-    print(f"  experimentIds: {json.dumps(experiment_ids)}")
+    print(f"  experiments: {json.dumps(experiments)}")
 
 
 if __name__ == "__main__":

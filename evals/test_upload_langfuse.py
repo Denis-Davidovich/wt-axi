@@ -8,6 +8,7 @@ import sys
 import tempfile
 import threading
 import unittest
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
@@ -17,7 +18,7 @@ STAMP = "2026-09-01T00:00:00Z"
 
 
 class UploadTest(unittest.TestCase):
-    def run_upload(self, swap_score=False):
+    def run_upload(self, swap_score=False, drop_score_for=None, confirm_timeout=None):
         items, roots, scores, requests = {}, {}, [], []
         dataset = {"id": "dataset-id", "name": "synthetic", "projectId": "project-id", "createdAt": STAMP, "updatedAt": STAMP, "description": None, "metadata": {}, "inputSchema": None, "expectedOutputSchema": None}
 
@@ -45,7 +46,7 @@ class UploadTest(unittest.TestCase):
                                 attrs = {a.key: getattr(a.value, a.value.WhichOneof("value")) for a in span.attributes}
                                 root_id = attrs.get("langfuse.experiment.item.root_observation_id")
                                 if root_id == span.span_id.hex():
-                                    roots[root_id] = {"id": root_id, "traceId": span.trace_id.hex(), "startTime": STAMP, "endTime": STAMP, "level": "DEFAULT", "environment": "default", "experimentId": attrs["langfuse.experiment.id"], "experimentName": attrs["langfuse.experiment.name"], "experimentItemId": attrs["langfuse.experiment.item.id"], "experimentDatasetId": attrs["langfuse.experiment.dataset.id"], "input": json.loads(attrs["langfuse.observation.input"]), "output": json.loads(attrs["langfuse.observation.output"]), "expectedOutput": json.loads(attrs["langfuse.experiment.item.expected_output"])}
+                                    roots[root_id] = {"id": root_id, "traceId": span.trace_id.hex(), "startTime": STAMP, "endTime": STAMP, "level": "DEFAULT", "environment": attrs.get("langfuse.environment", "default"), "experimentId": attrs["langfuse.experiment.id"], "experimentName": attrs["langfuse.experiment.name"], "experimentItemId": attrs["langfuse.experiment.item.id"], "experimentDatasetId": attrs["langfuse.experiment.dataset.id"], "input": json.loads(attrs["langfuse.observation.input"]), "output": json.loads(attrs["langfuse.observation.output"]), "expectedOutput": json.loads(attrs["langfuse.experiment.item.expected_output"])}
                     return self.send({})
                 body = json.loads(raw)
                 if path == "/api/public/v2/datasets":
@@ -55,6 +56,8 @@ class UploadTest(unittest.TestCase):
                     items[item["id"]] = item
                     return self.send(item)
                 if path == "/api/public/scores":
+                    if drop_score_for is not None and drop_score_for in body.get("comment", ""):
+                        return self.send({"id": body.get("id", "score-id")})
                     scores.append(body)
                     return self.send({"id": body.get("id", "score-id")})
                 return self.send({"message": "Unexpected endpoint"}, 400)
@@ -73,7 +76,7 @@ class UploadTest(unittest.TestCase):
                         for score in scores:
                             if score.get("observationId") != root["id"]:
                                 continue
-                            linked.append({"id": score.get("id", "score-id"), "projectId": "project-id", "name": score["name"], "source": "API", "timestamp": STAMP, "createdAt": STAMP, "updatedAt": STAMP, "environment": "default", "dataType": "BOOLEAN", "value": bool(score["value"]), "subject": {"kind": "observation", "id": "wrong-root" if swap_score else root["id"], "traceId": root["traceId"]}})
+                            linked.append({"id": score.get("id", "score-id"), "projectId": "project-id", "name": score["name"], "source": "API", "timestamp": STAMP, "createdAt": STAMP, "updatedAt": STAMP, "environment": score.get("environment", "default"), "dataType": "BOOLEAN", "value": bool(score["value"]), "subject": {"kind": "observation", "id": "wrong-root" if swap_score else root["id"], "traceId": root["traceId"]}})
                         data.append({**root, **{key: json.dumps(root[key]) for key in ("input", "output", "expectedOutput")}, "scores": linked})
                     return self.send({"data": data, "meta": {}})
                 return self.send({"message": "Unexpected endpoint"}, 400)
@@ -91,7 +94,10 @@ class UploadTest(unittest.TestCase):
                 (folder / "dataset.jsonl").write_text("\n".join(json.dumps(item) for item in corpus))
                 (folder / "model.results.tsv").write_text("scenario\tobserved\none\tin-place\ntwo\tin-place\n")
                 env = {**os.environ, "LANGFUSE_PUBLIC_KEY": "pk-test", "LANGFUSE_SECRET_KEY": "sk-test", "LANGFUSE_BASE_URL": f"http://127.0.0.1:{server.server_port}"}
-                result = subprocess.run([sys.executable, str(Path(__file__).with_name("upload-langfuse.py")), "--dataset", "synthetic", "--dataset-file", str(folder / "dataset.jsonl"), "--results-dir", str(folder)], env=env, text=True, capture_output=True, timeout=45)
+                command = [sys.executable, str(Path(__file__).with_name("upload-langfuse.py")), "--dataset", "synthetic", "--dataset-file", str(folder / "dataset.jsonl"), "--results-dir", str(folder), "--run-prefix", "prefix"]
+                if confirm_timeout is not None:
+                    command += ["--confirm-timeout", str(confirm_timeout)]
+                result = subprocess.run(command, env=env, text=True, capture_output=True, timeout=45)
                 return result, roots, scores, requests
         finally:
             server.shutdown()
@@ -104,10 +110,18 @@ class UploadTest(unittest.TestCase):
         self.assertIn("scores: 2", result.stdout)
         self.assertEqual(2, len(roots))
         self.assertEqual(1, len({r["experimentId"] for r in roots.values()}))
+        experiment_id, = {r["experimentId"] for r in roots.values()}
+        experiment_name, = {r["experimentName"] for r in roots.values()}
+        self.assertTrue(experiment_name.startswith("prefix/model/"), experiment_name)
+        self.assertNotEqual("prefix/model", experiment_name)
+        self.assertTrue(experiment_name.endswith(experiment_id[:8]), experiment_name)
+        self.assertIn(experiment_name, result.stdout)
         self.assertEqual(2, len(scores))
         for root in roots.values():
             score = next(s for s in scores if s["observationId"] == root["id"])
             self.assertEqual(root["traceId"], score["traceId"])
+            self.assertEqual("experiment", root["environment"])
+            self.assertEqual("experiment", score["environment"])
             self.assertEqual(root["input"]["scenarioId"] == "one", bool(score["value"]))
             self.assertEqual({"decision": "in-place"}, root["output"])
         for method, path, version in requests:
@@ -122,6 +136,33 @@ class UploadTest(unittest.TestCase):
         self.assertNotEqual(0, result.returncode)
         self.assertIn("score does not match its source item/root", result.stderr)
         self.assertNotIn("langfuseUpload:", result.stdout)
+
+    def test_repeated_runs_are_separate_experiment_attempts_with_stable_item_ids(self):
+        first, first_roots, _, _ = self.run_upload()
+        second, second_roots, _, _ = self.run_upload()
+        self.assertEqual(0, first.returncode, first.stderr)
+        self.assertEqual(0, second.returncode, second.stderr)
+        first_ids = {r["experimentId"] for r in first_roots.values()}
+        second_ids = {r["experimentId"] for r in second_roots.values()}
+        self.assertEqual(1, len(first_ids))
+        self.assertEqual(1, len(second_ids))
+        self.assertNotEqual(first_ids, second_ids)
+        self.assertEqual({r["experimentItemId"] for r in first_roots.values()}, {r["experimentItemId"] for r in second_roots.values()})
+
+    def test_unconfirmed_item_timeout_names_missing_item_ids_without_secrets(self):
+        result, roots, scores, _ = self.run_upload(drop_score_for="expected=worktree;", confirm_timeout=2)
+        self.assertNotEqual(0, result.returncode)
+        self.assertNotIn("langfuseUpload:", result.stdout)
+        self.assertEqual(2, len(roots))
+        self.assertEqual(1, len(scores))
+        missing_id = str(uuid.uuid5(uuid.NAMESPACE_URL, "wt-axi:synthetic:two"))
+        confirmed_id = str(uuid.uuid5(uuid.NAMESPACE_URL, "wt-axi:synthetic:one"))
+        self.assertIn("did not confirm 1 of 2 experiment items", result.stderr)
+        self.assertIn("last readback returned 2 rows", result.stderr)
+        self.assertIn(missing_id, result.stderr)
+        self.assertNotIn(confirmed_id, result.stderr)
+        self.assertNotIn("sk-test", result.stderr)
+        self.assertNotIn("pk-test", result.stderr)
 
 
 if __name__ == "__main__":

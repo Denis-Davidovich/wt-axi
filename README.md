@@ -189,17 +189,35 @@ Set real keys through the environment; never pass or commit them as command-line
 arguments. The uploader creates a versioned dataset with input/output schemas,
 uses stable item IDs for idempotent updates, creates one v4 experiment per model,
 and records a boolean `exact_match` score for every scenario. The transport sends
-`x-langfuse-ingestion-version: 4` explicitly. SDK experiment/score convenience
-methods still contain legacy writes, so the uploader uses SDK observations with
-OTEL experiment attributes and the dedicated scores API. It polls v4 experiment
-items for up to 30 seconds and checks each item/output/expected output and
-root-linked score before printing success; a rejected or mismatched publication
-exits non-zero. Polling only reads data and never resends observations.
+`x-langfuse-ingestion-version: 4` explicitly.
 
-Offline SDK/HTTP contract test (no LLM calls or production credentials):
+Every run is intentionally a separate experiment attempt: each model gets a fresh
+experiment UUID and a name of the form `<run-prefix>/<model>/<UTC stamp>-<uuid8>`,
+so repeated runs never merge new trace roots into an earlier experiment and the
+same prefix/model can be compared attempt by attempt. Only dataset item IDs are
+stable across runs. The printed `experiments` list carries the exact ID and name
+of each attempt for the follow-up production readback.
+
+SDK 4.14.4 `run_experiment` still writes dataset-run-items, which are deprecated
+together with the legacy observation ingestion events (see the
+[Langfuse deprecation FAQ](https://langfuse.com/faq/all/deprecated-api-migration)),
+so the uploader publishes SDK observations with OTEL experiment attributes
+instead. The SDK score convenience method sends a `score-create` ingestion event,
+which is not deprecated; the uploader nevertheless creates scores through the
+direct Scores API because that call returns a per-write response instead of a
+fire-and-forget batch. Observations and scores share `environment=experiment`. The uploader then polls v4 experiment
+items for up to 30 seconds (`--confirm-timeout`) and checks each item/output/
+expected output and root-linked score before printing success; a rejected or
+mismatched publication exits non-zero, and a timeout lists the unconfirmed
+dataset item IDs and the row count of the last readback. Polling only reads data
+and never resends observations.
+
+Offline SDK/HTTP contract test (no LLM calls or production credentials); CI runs
+it as a dedicated Python step outside `scripts/check.sh`, which stays
+shell-only:
 
 ```sh
-uv run --with 'langfuse==4.14.4' python -m unittest discover -s evals -p 'test_*.py'
+uv run --with 'langfuse==4.14.4' python -B -m unittest discover -s evals -p 'test_*.py'
 ```
 
 The decision record is [DEPENDENCIES.md](DEPENDENCIES.md). The research gate is
