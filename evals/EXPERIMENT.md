@@ -62,15 +62,20 @@ tool-enabled agent will perform or skip the corresponding Git operations.
 
 - Project: `wt-axi-evals`.
 - Dataset: `wt-axi/worktree-decision-v0`.
-- Runs: `wt-axi-policy-v0-2026-09-01/<provider-model>`.
+- Experiments: one v4 experiment per model per upload attempt under the
+  default prefix `wt-axi-policy-v0-2026-09-01`; the attempt naming and readback
+  contract are described in the [README Langfuse section](../README.md#development).
 - Item score: boolean `exact_match`.
-- Run metadata records the model, policy path, and
+- Experiment metadata records the model, policy path, and
   `executionMode=single-batch-call`.
 - Project: [`wt-axi-evals`](https://langfuse.monopoly-gold.com/project/cmtiaawgz01wrml06y08602db).
 - Dataset: [`wt-axi/worktree-decision-v0`](https://langfuse.monopoly-gold.com/project/cmtiaawgz01wrml06y08602db/datasets/cmtiar4cn01x5ml06mkoa3hd8/items).
 - Experiments: [four model runs](https://langfuse.monopoly-gold.com/project/cmtiaawgz01wrml06y08602db/datasets/cmtiar4cn01x5ml06mkoa3hd8/experiments).
-- Upload verified on 2026-09-01: 12 dataset items, 4 runs with 12 items each,
-  and 48 boolean `exact_match` scores, all `true`.
+- Upload verified on 2026-09-01 with the earlier SDK v3 dataset-run uploader:
+  12 dataset items, 4 runs with 12 items each, and 48 boolean `exact_match`
+  scores, all `true`. The v4 experiment uploader has not yet been verified
+  against the production project; that check uses a separate synthetic dataset
+  after merge and is not covered by the offline CI test.
 - The ephemeral project API key used for upload was revoked after verification;
   the project has no active API keys left by this experiment.
 
@@ -98,7 +103,7 @@ tool-enabled agent will perform or skip the corresponding Git operations.
 After Langfuse project credentials are available through the environment:
 
 ```sh
-uv run --with 'langfuse==3.15.0' python evals/upload-langfuse.py \
+uv run --with 'langfuse==4.14.4' python evals/upload-langfuse.py \
   --dataset-file evals/worktree-decision-dataset.jsonl \
   --results-dir /tmp/wt-axi-model-results
 ```

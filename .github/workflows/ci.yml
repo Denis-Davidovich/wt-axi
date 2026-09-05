@@ -20,6 +20,12 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y shellcheck
       - name: Generated skill/help sync, contract, safety, and install tests
         run: ./scripts/check.sh
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+      - name: Offline Langfuse v4 uploader SDK/HTTP contract test
+        run: uv run --with 'langfuse==4.14.4' python -B -m unittest discover -s evals -p 'test_*.py'
       - name: Cross-agent skill installation smoke
         run: ./tests/skill-smoke.sh
       - name: Agent Skills package discovery
