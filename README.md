@@ -173,8 +173,9 @@ results for experiment ingestion.
 The hypothesis, corpus distribution, acceptance gates, results, and limitations
 are summarized in [evals/EXPERIMENT.md](evals/EXPERIMENT.md).
 
-The target Langfuse instance runs v4. The uploader uses SDK v4 observations with the OTEL experiment attributes
-and confirms each item and its root-linked score through the Experiments API:
+The target Langfuse instance runs v4. The uploader uses SDK v4 observations
+with the OTEL experiment attributes and confirms each item and its root-linked
+score through the Experiments API:
 
 ```sh
 LANGFUSE_BASE_URL=https://langfuse.example.com \
@@ -206,12 +207,13 @@ instead. The SDK score convenience method sends a `score-create` ingestion event
 which is not deprecated; the uploader nevertheless creates scores through the
 direct Scores API because that call returns a per-write response instead of a
 fire-and-forget batch. Observations and scores share `environment=experiment`,
-and the readback rejects any item or score outside that environment. The uploader then polls v4 experiment
-items for up to 30 seconds (`--confirm-timeout`) and checks each item/output/
-expected output and root-linked score before printing success; a rejected or
-mismatched publication exits non-zero, and a timeout lists the unconfirmed
-dataset item IDs and the row count of the last readback. Polling only reads data
-and never resends observations.
+and the readback rejects any item or score outside that environment. The
+uploader then polls v4 experiment items for up to 30 seconds
+(`--confirm-timeout`) and checks each item/output/expected output and
+root-linked score before printing success; a rejected or mismatched publication
+exits non-zero, and a timeout lists the unconfirmed dataset item IDs and the row
+count of the last readback. Polling only reads data and never resends
+observations.
 
 Offline SDK/HTTP contract test (no LLM calls or production credentials); CI runs
 it as a dedicated Python step outside `scripts/check.sh`, which stays
